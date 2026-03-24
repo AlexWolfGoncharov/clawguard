@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <!-- Created with Perplexity Computer — https://www.perplexity.ai/computer -->
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Change Detail — ClawGuard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body style="background:var(--bg-0);color:var(--text-primary);font-family:var(--font-sans);padding:2rem;max-width:1000px;margin:0 auto">
+
+<div style="margin-bottom:1.5rem">
+  <a href="/" style="color:var(--text-muted);text-decoration:none;font-size:0.85rem">← Dashboard</a>
+</div>
+
+<div id="loading" style="text-align:center;padding:4rem;color:var(--text-muted)">
+  <div class="loading" style="width:2rem;height:2rem;margin:0 auto 1rem"></div>
+  Loading change...
+</div>
+
+<div id="content" style="display:none">
+  <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:1.5rem;gap:1rem;flex-wrap:wrap">
+    <div>
+      <h1 id="change-title" style="font-size:1.25rem;font-weight:700;letter-spacing:-0.02em;margin-bottom:0.25rem"></h1>
+      <div id="change-filepath" style="font-family:var(--font-mono);font-size:0.8rem;color:var(--text-muted)"></div>
+    </div>
+    <span id="change-badge"></span>
+  </div>
+
+  <div style="display:flex;gap:1.5rem;flex-wrap:wrap;margin-bottom:1.5rem;font-size:0.8rem;color:var(--text-secondary)">
+    <div><span style="color:var(--text-muted)">Agent: </span><span id="meta-agent"></span></div>
+    <div><span style="color:var(--text-muted)">Created: </span><span id="meta-created"></span></div>
+    <div><span style="color:var(--text-muted)">Additions: </span><span id="meta-add" style="color:var(--green)"></span></div>
+    <div><span style="color:var(--text-muted)">Deletions: </span><span id="meta-del" style="color:var(--red)"></span></div>
+  </div>
+
+  <!-- Action buttons (shown only for pending) -->
+  <div id="actions" style="display:flex;gap:0.75rem;margin-bottom:1.25rem"></div>
+
+  <!-- Diff -->
+  <div class="card">
+    <div class="card-header">
+      <div class="card-title">Unified Diff</div>
+      <span id="diff-stat" style="font-family:var(--font-mono);font-size:0.75rem;color:var(--text-muted)"></span>
+    </div>
+    <div id="diff-container" style="overflow-x:auto;max-height:80vh;overflow-y:auto"></div>
+  </div>
+
+  <div style="margin-top:1rem;font-size:0.75rem;color:var(--text-muted);text-align:center">
+    <a href="https://www.perplexity.ai/computer" target="_blank" rel="noopener noreferrer" style="color:var(--text-muted);text-decoration:none">Created with Perplexity Computer</a>
+  </div>
+</div>
+
+<div id="error" style="display:none;text-align:center;padding:4rem;color:var(--red)">
+  <div style="font-size:2rem;margin-bottom:0.75rem">⚠️</div>
+  <div id="error-msg"></div>
+  <a href="/" style="display:inline-block;margin-top:1rem;color:var(--accent)">← Back to Dashboard</a>
+</div>
+
+<div id="toast-container"></div>
+
+<script>
+const id = new URLSearchParams(location.search).get('id');
+
+async function load() {
+  if (!id) {
+    showError('No change ID provided. <a href="/" style="color:var(--accent)">Go to Dashboard</a>');
+    return;
+  }
+
+  try {
+    const e = await fetchJson('/api/changes/' + id);
+
+    document.title = 'Change: ' + e.file_path.split('/').pop() + ' — ClawGuard';
+    document.getElementById('change-title').textContent = e.file_path.split('/').pop();
+    document.getElementById('change-filepath').textContent = e.file_path;
+    document.getElementById('change-badge').innerHTML = statusBadge(e.status);
+    document.getElementById('meta-agent').textContent = e.agent_name;
+    document.getElementById('meta-created').textContent = new Date(e.created_at).toLocaleString();
+    document.getElementById('meta-add').textContent = '+' + e.additions;
+    document.getElementById('meta-del').textContent = '-' + e.deletions;
+    document.getElementById('diff-stat').textContent = '+' + e.additions + ' / -' + e.deletions;
+    document.getElementById('diff-container').innerHTML = e.diff_html ||
+      '<div class="empty-state"><div class="empty-state-text">Diff not available</div></div>';
+
+    if (e.status === 'pending') {
+      document.getElementById('actions').innerHTML = `
+        <button class="btn btn-success" onclick="resolve('approve')">✅ Apply Change</button>
+        <button class="btn btn-danger" onclick="resolve('reject')">❌ Reject</button>
+      `;
+    } else {
+      document.getElementById('actions').innerHTML =
+        '<div style="font-size:0.85rem;color:var(--text-muted)">This change has already been <strong>' + e.status + '</strong>.</div>';
+    }
+
+    document.getElementById('loading').style.display = 'none';
+    document.getElementById('content').style.display = 'block';
+  } catch (err) {
+    showError('Failed to load change: ' + err.message);
+  }
+}
+
+async function resolve(action) {
+  try {
+    await fetchJson('/api/changes/' + id + '/' + action, { method: 'POST' });
+    toast(action === 'approve' ? '✅ Change applied to filesystem' : '❌ Change rejected', action === 'approve' ? 'success' : 'error');
+    setTimeout(() => location.href = '/', 1500);
+  } catch (err) {
+    toast('Error: ' + err.message, 'error');
+  }
+}
+
+function showError(msg) {
+  document.getElementById('loading').style.display = 'none';
+  document.getElementById('error').style.display = 'block';
+  document.getElementById('error-msg').innerHTML = msg;
+}
+
+async function fetchJson(url, opts = {}) {
+  const res = await fetch(url, { headers: { 'Accept': 'application/json' }, ...opts });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error(err.error || res.statusText);
+  }
+  return res.json();
+}
+
+function statusBadge(status) {
+  const map = { pending: ['badge-pending', 'Pending'], approved: ['badge-approved', 'Approved'], rejected: ['badge-rejected', 'Rejected'] };
+  const [cls, label] = map[status] || ['', status];
+  return `<span class="badge ${cls}">${label}</span>`;
+}
+
+function toast(msg, type = 'success') {
+  const t = document.createElement('div');
+  t.className = 'toast ' + type;
+  t.textContent = msg;
+  document.getElementById('toast-container').appendChild(t);
+  setTimeout(() => t.remove(), 3500);
+}
+
+load();
+</script>
+</body>
+</html>

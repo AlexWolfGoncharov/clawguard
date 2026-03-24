@@ -1,0 +1,543 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <!-- Created with Perplexity Computer — https://www.perplexity.ai/computer -->
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ClawGuard Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" />
+  <link rel="stylesheet" href="style.css" />
+  <script src="https://unpkg.com/htmx.org@1.9.12/dist/htmx.min.js" defer></script>
+</head>
+<body>
+
+<div class="layout">
+  <!-- Sidebar -->
+  <aside class="sidebar">
+    <div class="sidebar-logo">
+      <svg width="28" height="28" viewBox="0 0 28 28" fill="none" aria-label="ClawGuard logo">
+        <rect width="28" height="28" rx="6" fill="#5c7cfa" opacity="0.15"/>
+        <path d="M14 4L7 9v6c0 4.4 3 8.5 7 9.5 4-1 7-5.1 7-9.5V9L14 4z" stroke="#5c7cfa" stroke-width="1.5" stroke-linejoin="round"/>
+        <path d="M10 14l2.5 2.5 5.5-5" stroke="#5c7cfa" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      <div>
+        <div class="sidebar-logo-text">ClawGuard</div>
+        <span class="sidebar-logo-ver">v0.1.0</span>
+      </div>
+    </div>
+
+    <nav class="sidebar-nav">
+      <a class="nav-item active" onclick="showPage('dashboard', this)">
+        <svg width="16" height="16" fill="none" viewBox="0 0 16 16"><rect x="1" y="1" width="6" height="6" rx="1.5" stroke="currentColor" stroke-width="1.25"/><rect x="9" y="1" width="6" height="6" rx="1.5" stroke="currentColor" stroke-width="1.25"/><rect x="1" y="9" width="6" height="6" rx="1.5" stroke="currentColor" stroke-width="1.25"/><rect x="9" y="9" width="6" height="6" rx="1.5" stroke="currentColor" stroke-width="1.25"/></svg>
+        Dashboard
+      </a>
+      <a class="nav-item" onclick="showPage('pending', this)">
+        <svg width="16" height="16" fill="none" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.5" stroke="currentColor" stroke-width="1.25"/><path d="M8 5v3.5l2.5 1.5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/></svg>
+        Pending
+        <span class="nav-badge" id="pending-badge">0</span>
+      </a>
+      <a class="nav-item" onclick="showPage('history', this)">
+        <svg width="16" height="16" fill="none" viewBox="0 0 16 16"><path d="M2 8a6 6 0 1 0 6-6" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/><path d="M2 3v5h5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        History
+      </a>
+      <a class="nav-item" onclick="showPage('budget', this)">
+        <svg width="16" height="16" fill="none" viewBox="0 0 16 16"><path d="M8 2v1m0 10v1M4.22 4.22l.7.7m5.66 5.66.7.7M2 8h1m10 0h1M4.22 11.78l.7-.7m5.66-5.66.7-.7" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/><circle cx="8" cy="8" r="2.5" stroke="currentColor" stroke-width="1.25"/></svg>
+        Budget
+      </a>
+    </nav>
+
+    <div class="sidebar-footer">
+      <a href="https://www.perplexity.ai/computer" target="_blank" rel="noopener noreferrer">
+        Created with Perplexity Computer
+      </a>
+    </div>
+  </aside>
+
+  <!-- Main Content -->
+  <main class="main">
+
+    <!-- ── Dashboard Page ── -->
+    <div id="page-dashboard" class="page active">
+      <div class="page-header">
+        <div>
+          <div class="page-title">Dashboard</div>
+          <div class="page-subtitle" id="dashboard-subtitle">Loading...</div>
+        </div>
+        <button class="btn btn-ghost btn-sm" onclick="refreshAll()">↻ Refresh</button>
+      </div>
+
+      <div class="stats-grid">
+        <div class="stat-card">
+          <div class="stat-label">Pending</div>
+          <div class="stat-value yellow" id="stat-pending">—</div>
+          <div class="stat-meta">awaiting approval</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Approved</div>
+          <div class="stat-value green" id="stat-approved">—</div>
+          <div class="stat-meta">applied to filesystem</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Rejected</div>
+          <div class="stat-value red" id="stat-rejected">—</div>
+          <div class="stat-meta">discarded changes</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Uptime</div>
+          <div class="stat-value accent" id="stat-uptime">—</div>
+          <div class="stat-meta">server running</div>
+        </div>
+      </div>
+
+      <div class="budget-card">
+        <div class="budget-header">
+          <div class="budget-label">Today's Budget</div>
+          <div class="budget-amount">
+            <strong id="budget-used">$0.0000</strong> / <span id="budget-limit">$10.00</span>
+          </div>
+        </div>
+        <div class="budget-bar-track">
+          <div class="budget-bar-fill" id="budget-bar" style="width: 0%"></div>
+        </div>
+        <div class="budget-stats">
+          <span><span id="budget-pct">0%</span> used</span>
+          <span id="budget-tokens">0 tokens</span>
+          <span id="budget-session">session: $0.0000</span>
+          <span id="budget-alert" style="display:none; color: var(--yellow)">⚠ Alert threshold</span>
+          <span id="budget-blocked" style="display:none; color: var(--red)">⛔ Limit reached</span>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">Recent Activity</div>
+          <button class="btn btn-ghost btn-sm" onclick="showPage('history', null)">View all</button>
+        </div>
+        <div id="recent-activity">
+          <div class="empty-state">
+            <div class="empty-state-icon">📋</div>
+            <div class="empty-state-text">No changes yet</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Pending Page ── -->
+    <div id="page-pending" class="page">
+      <div class="page-header">
+        <div>
+          <div class="page-title">Pending Changes</div>
+          <div class="page-subtitle">Awaiting your approval</div>
+        </div>
+        <button class="btn btn-ghost btn-sm" onclick="loadPending()">↻ Refresh</button>
+      </div>
+      <div id="pending-list">
+        <div class="empty-state">
+          <div class="empty-state-icon">✅</div>
+          <div class="empty-state-text">No pending changes</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── History Page ── -->
+    <div id="page-history" class="page">
+      <div class="page-header">
+        <div>
+          <div class="page-title">History</div>
+          <div class="page-subtitle">Past approvals and rejections</div>
+        </div>
+        <button class="btn btn-ghost btn-sm" onclick="loadHistory()">↻ Refresh</button>
+      </div>
+      <div class="card">
+        <table>
+          <thead>
+            <tr>
+              <th>File</th>
+              <th>Changes</th>
+              <th>Status</th>
+              <th>Agent</th>
+              <th>Time</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="history-tbody">
+            <tr>
+              <td colspan="6">
+                <div class="empty-state">
+                  <div class="empty-state-icon">📜</div>
+                  <div class="empty-state-text">No history yet</div>
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- ── Budget Page ── -->
+    <div id="page-budget" class="page">
+      <div class="page-header">
+        <div>
+          <div class="page-title">Budget</div>
+          <div class="page-subtitle">Token usage and spending limits</div>
+        </div>
+        <button class="btn btn-ghost btn-sm" onclick="loadBudget()">↻ Refresh</button>
+      </div>
+
+      <div class="stats-grid" style="margin-bottom:1.5rem">
+        <div class="stat-card">
+          <div class="stat-label">Used Today</div>
+          <div class="stat-value accent" id="budget-detail-used">—</div>
+          <div class="stat-meta">USD</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Daily Limit</div>
+          <div class="stat-value" id="budget-detail-limit">—</div>
+          <div class="stat-meta">USD</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Tokens Today</div>
+          <div class="stat-value" id="budget-detail-tokens">—</div>
+          <div class="stat-meta">total</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">This Session</div>
+          <div class="stat-value green" id="budget-detail-session">—</div>
+          <div class="stat-meta">USD</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header"><div class="card-title">Daily Breakdown (7 days)</div></div>
+        <table>
+          <thead>
+            <tr><th>Date</th><th>Cost (USD)</th><th>Tokens</th></tr>
+          </thead>
+          <tbody id="budget-breakdown-tbody">
+            <tr><td colspan="3"><div class="empty-state"><div class="empty-state-text">No data</div></div></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- ── Change Detail (inline overlay) ── -->
+    <div id="page-change" class="page">
+      <div class="page-header">
+        <div>
+          <button class="btn btn-ghost btn-sm" onclick="showPage('pending', null)" style="margin-bottom:0.5rem">← Back</button>
+          <div class="page-title" id="change-title">Change Detail</div>
+        </div>
+        <span id="change-status-badge"></span>
+      </div>
+
+      <div class="change-meta">
+        <div><span>File:</span><code id="change-filepath"></code></div>
+        <div><span>Created:</span><span id="change-created"></span></div>
+        <div><span>Agent:</span><span id="change-agent"></span></div>
+        <div><span>Diff:</span><span id="change-diffstat"></span></div>
+      </div>
+
+      <div class="card">
+        <div class="card-header"><div class="card-title">Diff</div></div>
+        <div id="change-diff" style="max-height: 70vh; overflow-y: auto;"></div>
+      </div>
+
+      <div class="change-actions" id="change-actions"></div>
+    </div>
+
+  </main>
+</div>
+
+<div id="toast-container"></div>
+
+<script>
+// ── State ─────────────────────────────────────────────────────────────────────
+let currentPage = 'dashboard';
+let sseSource = null;
+
+// ── Navigation ───────────────────────────────────────────────────────────────
+
+function showPage(name, navEl) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+
+  const page = document.getElementById('page-' + name);
+  if (page) page.classList.add('active');
+  if (navEl) navEl.classList.add('active');
+
+  currentPage = name;
+
+  if (name === 'dashboard') refreshAll();
+  else if (name === 'pending') loadPending();
+  else if (name === 'history') loadHistory();
+  else if (name === 'budget') loadBudget();
+}
+
+// ── Dashboard ────────────────────────────────────────────────────────────────
+
+async function refreshAll() {
+  try {
+    const status = await fetchJson('/api/status');
+    document.getElementById('stat-pending').textContent = status.pending;
+    document.getElementById('stat-approved').textContent = status.approved;
+    document.getElementById('stat-rejected').textContent = status.rejected;
+    document.getElementById('stat-uptime').textContent = formatUptime(status.uptime);
+    document.getElementById('pending-badge').textContent = status.pending;
+    document.getElementById('dashboard-subtitle').textContent =
+      'Last refreshed ' + new Date().toLocaleTimeString();
+
+    updateBudgetBar(status.budget);
+    loadRecentActivity();
+  } catch (err) {
+    console.error('Status error:', err);
+  }
+}
+
+function updateBudgetBar(b) {
+  const pct = Math.min(b.percentage, 100);
+  const bar = document.getElementById('budget-bar');
+  bar.style.width = pct + '%';
+  bar.className = 'budget-bar-fill' + (b.blocked ? ' danger' : b.alert ? ' warn' : '');
+
+  document.getElementById('budget-used').textContent = '$' + b.used_today_usd.toFixed(4);
+  document.getElementById('budget-limit').textContent = '$' + b.limit_usd.toFixed(2);
+  document.getElementById('budget-pct').textContent = pct.toFixed(1) + '%';
+  document.getElementById('budget-tokens').textContent = b.total_tokens_today.toLocaleString() + ' tokens';
+  document.getElementById('budget-session').textContent = 'session: $' + b.session_usd.toFixed(4);
+  document.getElementById('budget-alert').style.display = b.alert && !b.blocked ? '' : 'none';
+  document.getElementById('budget-blocked').style.display = b.blocked ? '' : 'none';
+}
+
+async function loadRecentActivity() {
+  try {
+    const data = await fetchJson('/api/changes?limit=5');
+    const container = document.getElementById('recent-activity');
+    if (!data.length) {
+      container.innerHTML = '<div class="empty-state"><div class="empty-state-icon">📋</div><div class="empty-state-text">No changes yet</div></div>';
+      return;
+    }
+
+    container.innerHTML = '<table><thead><tr><th>File</th><th>Status</th><th>Time</th></tr></thead><tbody>' +
+      data.map(e => `<tr>
+        <td class="td-path">${esc(e.file_path)}</td>
+        <td>${statusBadge(e.status)}</td>
+        <td style="color:var(--text-muted);font-size:0.8rem">${timeAgo(e.resolved_at || e.created_at)}</td>
+      </tr>`).join('') + '</tbody></table>';
+  } catch (err) {
+    console.error('Activity error:', err);
+  }
+}
+
+// ── Pending ──────────────────────────────────────────────────────────────────
+
+async function loadPending() {
+  try {
+    const data = await fetchJson('/api/changes?status=pending');
+    const container = document.getElementById('pending-list');
+
+    if (!data.length) {
+      container.innerHTML = '<div class="card"><div class="empty-state"><div class="empty-state-icon">✅</div><div class="empty-state-text">No pending changes — the agent is quiet</div></div></div>';
+      document.getElementById('pending-badge').textContent = '0';
+      return;
+    }
+
+    document.getElementById('pending-badge').textContent = data.length;
+    container.innerHTML = data.map(e => `
+      <div class="card" style="margin-bottom:1rem">
+        <div class="card-header">
+          <div>
+            <div class="card-title" style="font-family:var(--font-mono);font-size:0.8rem">${esc(e.file_path)}</div>
+            <div style="font-size:0.75rem;color:var(--text-muted);margin-top:0.2rem">
+              ${timeAgo(e.created_at)} · agent: ${esc(e.agent_name)} · +${e.additions}/-${e.deletions}
+            </div>
+          </div>
+          <span class="badge badge-pending">Pending</span>
+        </div>
+        <div style="padding:0.5rem 1.25rem 1.25rem">
+          <button class="btn btn-ghost btn-sm" onclick="viewChange('${e.id}')">View Diff</button>
+          <div style="float:right;display:flex;gap:0.5rem">
+            <button class="btn btn-success btn-sm" onclick="resolveChange('${e.id}','approve')">✅ Apply</button>
+            <button class="btn btn-danger btn-sm" onclick="resolveChange('${e.id}','reject')">❌ Reject</button>
+          </div>
+        </div>
+      </div>
+    `).join('');
+  } catch (err) {
+    console.error('Pending error:', err);
+  }
+}
+
+// ── History ──────────────────────────────────────────────────────────────────
+
+async function loadHistory() {
+  try {
+    const data = await fetchJson('/api/changes?limit=50');
+    const tbody = document.getElementById('history-tbody');
+
+    if (!data.length) {
+      tbody.innerHTML = '<tr><td colspan="6"><div class="empty-state"><div class="empty-state-icon">📜</div><div class="empty-state-text">No history yet</div></div></td></tr>';
+      return;
+    }
+
+    tbody.innerHTML = data.map(e => `<tr>
+      <td class="td-path" title="${esc(e.file_path)}">${esc(e.file_path.split('/').pop())}</td>
+      <td style="font-size:0.75rem;color:var(--text-muted)">+${e.additions}/-${e.deletions}</td>
+      <td>${statusBadge(e.status)}</td>
+      <td style="font-size:0.8rem">${esc(e.agent_name)}</td>
+      <td style="font-size:0.75rem;color:var(--text-muted)">${timeAgo(e.resolved_at || e.created_at)}</td>
+      <td><button class="btn btn-ghost btn-sm" onclick="viewChange('${e.id}')">View</button></td>
+    </tr>`).join('');
+  } catch (err) {
+    console.error('History error:', err);
+  }
+}
+
+// ── Budget ───────────────────────────────────────────────────────────────────
+
+async function loadBudget() {
+  try {
+    const data = await fetchJson('/api/budget');
+    const s = data.status;
+
+    document.getElementById('budget-detail-used').textContent = '$' + s.used_today_usd.toFixed(4);
+    document.getElementById('budget-detail-limit').textContent = '$' + s.limit_usd.toFixed(2);
+    document.getElementById('budget-detail-tokens').textContent = s.total_tokens_today.toLocaleString();
+    document.getElementById('budget-detail-session').textContent = '$' + s.session_usd.toFixed(4);
+
+    const tbody = document.getElementById('budget-breakdown-tbody');
+    if (!data.breakdown.length) {
+      tbody.innerHTML = '<tr><td colspan="3"><div class="empty-state"><div class="empty-state-text">No usage data yet</div></div></td></tr>';
+      return;
+    }
+    tbody.innerHTML = data.breakdown.map(r => `<tr>
+      <td>${r.date}</td>
+      <td style="font-family:var(--font-mono)">$${Number(r.cost_usd).toFixed(4)}</td>
+      <td style="font-family:var(--font-mono)">${Number(r.tokens).toLocaleString()}</td>
+    </tr>`).join('');
+  } catch (err) {
+    console.error('Budget error:', err);
+  }
+}
+
+// ── Change Detail ─────────────────────────────────────────────────────────────
+
+async function viewChange(id) {
+  try {
+    const e = await fetchJson('/api/changes/' + id);
+
+    document.getElementById('change-title').textContent = e.file_path.split('/').pop();
+    document.getElementById('change-filepath').textContent = e.file_path;
+    document.getElementById('change-created').textContent = new Date(e.created_at).toLocaleString();
+    document.getElementById('change-agent').textContent = e.agent_name;
+    document.getElementById('change-diffstat').textContent = '+' + e.additions + ' / -' + e.deletions;
+    document.getElementById('change-status-badge').innerHTML = statusBadge(e.status);
+    document.getElementById('change-diff').innerHTML = e.diff_html || '<div class="empty-state"><div class="empty-state-text">No diff available</div></div>';
+
+    const actions = document.getElementById('change-actions');
+    if (e.status === 'pending') {
+      actions.innerHTML = `
+        <button class="btn btn-success" onclick="resolveChange('${e.id}','approve');showPage('pending',null)">✅ Apply Change</button>
+        <button class="btn btn-danger" onclick="resolveChange('${e.id}','reject');showPage('pending',null)">❌ Reject</button>
+      `;
+    } else {
+      actions.innerHTML = `<div style="color:var(--text-muted);font-size:0.85rem">This change has been ${e.status}.</div>`;
+    }
+
+    showPage('change', null);
+  } catch (err) {
+    toast('Failed to load change: ' + err.message, 'error');
+  }
+}
+
+// ── Actions ──────────────────────────────────────────────────────────────────
+
+async function resolveChange(id, action) {
+  try {
+    await fetchJson('/api/changes/' + id + '/' + action, { method: 'POST' });
+    toast(action === 'approve' ? '✅ Change applied' : '❌ Change rejected',
+      action === 'approve' ? 'success' : 'error');
+    loadPending();
+  } catch (err) {
+    toast('Error: ' + err.message, 'error');
+  }
+}
+
+// ── SSE ──────────────────────────────────────────────────────────────────────
+
+function startSSE() {
+  if (sseSource) return;
+  sseSource = new EventSource('/api/events');
+  sseSource.onmessage = (e) => {
+    const data = JSON.parse(e.data);
+    if (document.getElementById('pending-badge')) {
+      document.getElementById('pending-badge').textContent = data.counts.pending;
+    }
+    if (currentPage === 'dashboard') updateBudgetBar(data.budget);
+  };
+  sseSource.onerror = () => {
+    sseSource.close();
+    sseSource = null;
+    setTimeout(startSSE, 5000);
+  };
+}
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+async function fetchJson(url, opts = {}) {
+  const res = await fetch(url, { headers: { 'Accept': 'application/json' }, ...opts });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error(err.error || res.statusText);
+  }
+  return res.json();
+}
+
+function statusBadge(status) {
+  const map = { pending: ['badge-pending', 'Pending'], approved: ['badge-approved', 'Approved'], rejected: ['badge-rejected', 'Rejected'] };
+  const [cls, label] = map[status] || ['', status];
+  return `<span class="badge ${cls}">${label}</span>`;
+}
+
+function timeAgo(iso) {
+  if (!iso) return '—';
+  const secs = Math.floor((Date.now() - new Date(iso)) / 1000);
+  if (secs < 60) return secs + 's ago';
+  const mins = Math.floor(secs / 60);
+  if (mins < 60) return mins + 'm ago';
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return hrs + 'h ago';
+  return Math.floor(hrs / 24) + 'd ago';
+}
+
+function formatUptime(secs) {
+  const h = Math.floor(secs / 3600);
+  const m = Math.floor((secs % 3600) / 60);
+  return h > 0 ? `${h}h ${m}m` : `${m}m`;
+}
+
+function esc(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function toast(msg, type = 'success') {
+  const t = document.createElement('div');
+  t.className = 'toast ' + type;
+  t.textContent = msg;
+  document.getElementById('toast-container').appendChild(t);
+  setTimeout(() => t.remove(), 3500);
+}
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+
+document.addEventListener('DOMContentLoaded', () => {
+  refreshAll();
+  startSSE();
+  setInterval(() => {
+    if (currentPage === 'dashboard') refreshAll();
+    else if (currentPage === 'pending') loadPending();
+  }, 15000);
+});
+</script>
+</body>
+</html>

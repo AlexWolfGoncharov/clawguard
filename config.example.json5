@@ -1,0 +1,53 @@
+// ClawGuard Configuration
+// Copy this file to config.json5 and fill in your values.
+// JSON5 allows comments, trailing commas, and unquoted keys.
+{
+  // Notification & approval channels
+  channels: {
+    telegram: {
+      enabled: true,
+      token: "YOUR_BOT_TOKEN",       // From @BotFather
+      chatId: "YOUR_CHAT_ID",         // Your personal or group chat ID
+    },
+    discord: {
+      enabled: false,
+      token: "YOUR_BOT_TOKEN",        // From Discord Developer Portal
+      channelId: "YOUR_CHANNEL_ID",   // Channel to post diffs in
+    },
+    web: {
+      enabled: true,
+      port: 3847,                      // localhost dashboard port
+      host: "127.0.0.1",              // Bind address
+    },
+  },
+
+  // Spending limits
+  budget: {
+    daily_limit_usd: 10.00,           // Hard daily cap in USD
+    alert_threshold_pct: 80,          // Alert at X% of daily limit
+    hard_stop: true,                  // Block agent if limit exceeded
+    model_costs: {                    // USD per 1M tokens (override defaults)
+      // "gpt-4o": { input: 2.50, output: 10.00 },
+    },
+  },
+
+  // Staging behavior
+  staging: {
+    directory: "/tmp/clawguard/staging",
+    auto_approve_read: true,          // Don't require approval for read-only ops
+    require_approval: [               // Tool names that trigger approval
+      "write",
+      "edit",
+      "apply_patch",
+      "exec",
+    ],
+    timeout_seconds: 300,             // Auto-reject after N seconds (0 = never)
+  },
+
+  // Logging
+  logging: {
+    level: "info",                    // "debug" | "info" | "warn" | "error"
+    file: "~/.clawguard/clawguard.log",
+    max_size_mb: 10,
+  },
+}
