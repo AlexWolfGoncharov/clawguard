@@ -1,4 +1,4 @@
-import Database from 'better-sqlite3';
+import initSqlJs, { type Database as SqlJsDatabase } from 'sql.js';
 import path from 'path';
 import os from 'os';
 import fs from 'fs';
@@ -51,28 +51,56 @@ const DEFAULT_MODEL_COSTS: Record<string, { input: number; output: number }> = {
   'gpt-4o-mini': { input: 0.15, output: 0.6 },
   'gpt-4-turbo': { input: 10.0, output: 30.0 },
   'gpt-3.5-turbo': { input: 0.5, output: 1.5 },
-  'claude-3-5-sonnet': { input: 3.0, output: 15.0 },
-  'claude-3-5-haiku': { input: 0.8, output: 4.0 },
-  'claude-3-opus': { input: 15.0, output: 75.0 },
-  'gemini-1.5-pro': { input: 1.25, output: 5.0 },
-  'gemini-1.5-flash': { input: 0.075, output: 0.3 },
+  'claude-sonnet-4': { input: 3.0, output: 15.0 },
+  'claude-haiku': { input: 0.8, output: 4.0 },
+  'claude-opus-4': { input: 15.0, output: 75.0 },
+  'gemini-2.5-pro': { input: 1.25, output: 5.0 },
+  'gemini-2.5-flash': { input: 0.075, output: 0.3 },
 };
 
-let _db: Database.Database | null = null;
+let _db: SqlJsDatabase | null = null;
+let _dbReady: Promise<void> | null = null;
 
-function getDb(): Database.Database {
+function save(): void {
+  if (!_db) return;
+  const dir = path.dirname(DB_PATH);
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  const data = _db.export();
+  fs.writeFileSync(DB_PATH, Buffer.from(data));
+}
+
+async function initDb(): Promise<SqlJsDatabase> {
   if (_db) return _db;
 
+  const SQL = await initSqlJs();
   const dir = path.dirname(DB_PATH);
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+
+  if (fs.existsSync(DB_PATH)) {
+    const buf = fs.readFileSync(DB_PATH);
+    _db = new SQL.Database(buf);
+  } else {
+    _db = new SQL.Database();
   }
 
-  _db = new Database(DB_PATH);
-  _db.exec(CREATE_BUDGET_TABLE);
-  _db.pragma('journal_mode = WAL');
-
+  _db.run(CREATE_BUDGET_TABLE);
+  save();
   return _db;
+}
+
+function autoInit(): SqlJsDatabase {
+  if (!_db) {
+    throw new Error('Budget DB not ready. Call await ensureBudgetReady() during bootstrap.');
+  }
+  return _db;
+}
+
+export async function ensureBudgetReady(): Promise<void> {
+  if (_db) return;
+  if (!_dbReady) {
+    _dbReady = initDb().then(() => {});
+  }
+  await _dbReady;
 }
 
 export class BudgetTracker {
@@ -81,7 +109,6 @@ export class BudgetTracker {
 
   constructor(sessionId?: string) {
     this.sessionId = sessionId ?? `session-${Date.now()}`;
-    getDb(); // Ensure table exists
     log.info(`Budget tracker initialized (session: ${this.sessionId})`);
   }
 
@@ -92,7 +119,6 @@ export class BudgetTracker {
     const config = getConfig();
     const customCosts = config.budget.model_costs ?? {};
 
-    // Check custom config first, then defaults
     const modelKey = Object.keys({ ...customCosts, ...DEFAULT_MODEL_COSTS }).find(
       (k) => model.toLowerCase().includes(k.toLowerCase())
     );
@@ -111,33 +137,19 @@ export class BudgetTracker {
   addUsage(
     tokens: number,
     costUsd: number,
-    opts: {
-      model?: string;
-      inputTokens?: number;
-      outputTokens?: number;
-      agentName?: string;
-    } = {}
+    model = 'unknown',
+    agentName = 'openclaw'
   ): void {
-    const db = getDb();
-    const inputTokens = opts.inputTokens ?? Math.floor(tokens * 0.6);
-    const outputTokens = opts.outputTokens ?? tokens - inputTokens;
-    const model = opts.model ?? 'unknown';
-    const agentName = opts.agentName ?? 'openclaw';
+    const db = autoInit();
+    const inputTokens = Math.floor(tokens * 0.6);
+    const outputTokens = tokens - inputTokens;
 
-    const stmt = db.prepare(`
-      INSERT INTO usage (timestamp, model, input_tokens, output_tokens, cost_usd, session_id, agent_name)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `);
-
-    stmt.run(
-      new Date().toISOString(),
-      model,
-      inputTokens,
-      outputTokens,
-      costUsd,
-      this.sessionId,
-      agentName
+    db.run(
+      `INSERT INTO usage (timestamp, model, input_tokens, output_tokens, cost_usd, session_id, agent_name)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [new Date().toISOString(), model, inputTokens, outputTokens, costUsd, this.sessionId, agentName]
     );
+    save();
 
     this.sessionCost += costUsd;
     log.debug(`Usage: ${tokens} tokens, $${costUsd.toFixed(4)} (${model})`);
@@ -147,36 +159,38 @@ export class BudgetTracker {
    * Get today's total spend.
    */
   getTodaySpend(): number {
-    const db = getDb();
+    const db = autoInit();
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
-    const stmt = db.prepare(`
-      SELECT COALESCE(SUM(cost_usd), 0) as total
-      FROM usage
-      WHERE timestamp >= ?
-    `);
-
-    const row = stmt.get(today.toISOString()) as { total: number };
-    return row.total;
+    const stmt = db.prepare(`SELECT COALESCE(SUM(cost_usd), 0) as total FROM usage WHERE timestamp >= ?`);
+    stmt.bind([today.toISOString()]);
+    let total = 0;
+    if (stmt.step()) {
+      total = (stmt.getAsObject()['total'] as number) ?? 0;
+    }
+    stmt.free();
+    return total;
   }
 
   /**
    * Get today's total token count.
    */
   getTodayTokens(): number {
-    const db = getDb();
+    const db = autoInit();
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
-    const stmt = db.prepare(`
-      SELECT COALESCE(SUM(input_tokens + output_tokens), 0) as total
-      FROM usage
-      WHERE timestamp >= ?
-    `);
-
-    const row = stmt.get(today.toISOString()) as { total: number };
-    return row.total;
+    const stmt = db.prepare(
+      `SELECT COALESCE(SUM(input_tokens + output_tokens), 0) as total FROM usage WHERE timestamp >= ?`
+    );
+    stmt.bind([today.toISOString()]);
+    let total = 0;
+    if (stmt.step()) {
+      total = (stmt.getAsObject()['total'] as number) ?? 0;
+    }
+    stmt.free();
+    return total;
   }
 
   /**
@@ -191,18 +205,6 @@ export class BudgetTracker {
     const percentage = daily_limit_usd > 0 ? (usedToday / daily_limit_usd) * 100 : 0;
     const alert = percentage >= alert_threshold_pct;
     const blocked = hard_stop && usedToday >= daily_limit_usd;
-
-    if (alert && !blocked) {
-      log.warn(
-        `Budget alert: $${usedToday.toFixed(4)} of $${daily_limit_usd} (${percentage.toFixed(1)}%)`
-      );
-    }
-
-    if (blocked) {
-      log.error(
-        `Budget limit reached: $${usedToday.toFixed(4)} >= $${daily_limit_usd} — agent blocked`
-      );
-    }
 
     return {
       used_today_usd: usedToday,
@@ -226,44 +228,56 @@ export class BudgetTracker {
    * Get usage history for the past N days.
    */
   getHistory(days = 7): UsageRecord[] {
-    const db = getDb();
+    const db = autoInit();
     const since = new Date();
     since.setDate(since.getDate() - days);
     since.setHours(0, 0, 0, 0);
 
-    const stmt = db.prepare(`
-      SELECT * FROM usage
-      WHERE timestamp >= ?
-      ORDER BY timestamp DESC
-    `);
-
-    return stmt.all(since.toISOString()) as UsageRecord[];
+    const results: UsageRecord[] = [];
+    const stmt = db.prepare(`SELECT * FROM usage WHERE timestamp >= ? ORDER BY timestamp DESC`);
+    stmt.bind([since.toISOString()]);
+    while (stmt.step()) {
+      const row = stmt.getAsObject();
+      results.push({
+        id: row['id'] as number,
+        timestamp: row['timestamp'] as string,
+        model: row['model'] as string,
+        input_tokens: row['input_tokens'] as number,
+        output_tokens: row['output_tokens'] as number,
+        cost_usd: row['cost_usd'] as number,
+        session_id: row['session_id'] as string,
+        agent_name: row['agent_name'] as string,
+      });
+    }
+    stmt.free();
+    return results;
   }
 
   /**
    * Get aggregated daily spend for the past N days.
    */
   getDailyBreakdown(days = 7): Array<{ date: string; cost_usd: number; tokens: number }> {
-    const db = getDb();
+    const db = autoInit();
     const since = new Date();
     since.setDate(since.getDate() - days);
 
+    const results: Array<{ date: string; cost_usd: number; tokens: number }> = [];
     const stmt = db.prepare(`
-      SELECT
-        DATE(timestamp) as date,
-        SUM(cost_usd) as cost_usd,
-        SUM(input_tokens + output_tokens) as tokens
-      FROM usage
-      WHERE timestamp >= ?
-      GROUP BY DATE(timestamp)
-      ORDER BY date ASC
+      SELECT DATE(timestamp) as date, SUM(cost_usd) as cost_usd, SUM(input_tokens + output_tokens) as tokens
+      FROM usage WHERE timestamp >= ?
+      GROUP BY DATE(timestamp) ORDER BY date ASC
     `);
-
-    return stmt.all(since.toISOString()) as Array<{
-      date: string;
-      cost_usd: number;
-      tokens: number;
-    }>;
+    stmt.bind([since.toISOString()]);
+    while (stmt.step()) {
+      const row = stmt.getAsObject();
+      results.push({
+        date: row['date'] as string,
+        cost_usd: row['cost_usd'] as number,
+        tokens: row['tokens'] as number,
+      });
+    }
+    stmt.free();
+    return results;
   }
 
   getSessionId(): string {

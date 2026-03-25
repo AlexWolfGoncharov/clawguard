@@ -100,11 +100,7 @@ export const ClawGuardPlugin: OpenClawPlugin = {
       const inputT = ctx.inputTokens ?? 0;
       const outputT = ctx.outputTokens ?? 0;
       const cost = tracker.calculateCost('unknown', inputT, outputT);
-      tracker.addUsage(inputT + outputT, cost, {
-        inputTokens: inputT,
-        outputTokens: outputT,
-        agentName: ctx.agentName ?? 'openclaw',
-      });
+      tracker.addUsage(inputT + outputT, cost, 'unknown', ctx.agentName ?? 'openclaw');
     }
 
     // Check budget

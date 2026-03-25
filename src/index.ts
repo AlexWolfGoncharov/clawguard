@@ -9,8 +9,9 @@ import logger from './utils/logger.js';
 import { startTelegram, stopTelegram } from './channels/telegram.js';
 import { startDiscord, stopDiscord } from './channels/discord.js';
 import { startWeb, stopWeb } from './channels/web.js';
-import { getBudgetTracker } from './core/budget.js';
+import { getBudgetTracker, ensureBudgetReady } from './core/budget.js';
 import { getStagingEngine } from './core/staging.js';
+import { ensureReady as ensureQueueReady } from './core/queue.js';
 import ClawGuardPlugin, { notifyResolution } from './openclaw/plugin.js';
 
 export { ClawGuardPlugin, notifyResolution };
@@ -31,6 +32,10 @@ async function bootstrap(): Promise<void> {
 
   // Ensure staging directory exists
   getStagingEngine();
+
+  // Initialize async databases (sql.js)
+  await ensureQueueReady();
+  await ensureBudgetReady();
 
   // Ensure budget tracker is ready
   getBudgetTracker();
