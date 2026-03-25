@@ -28,6 +28,47 @@ if (fs.existsSync(WEB_DIR)) {
 // ── API Routes ────────────────────────────────────────────────────────────────
 
 /**
+ * POST /api/stage — Agent submits a file change for review
+ * This is the main entry point for OpenClaw agents.
+ */
+app.post('/api/stage', (req: Request, res: Response) => {
+  try {
+    const { file_path: filePath, new_content: newContent, agent_name: agentName } = req.body;
+
+    if (!filePath || newContent === undefined) {
+      return res.status(400).json({ error: 'file_path and new_content are required' });
+    }
+
+    const staging = getStagingEngine();
+    const staged = staging.stage(filePath, newContent);
+
+    // Generate diff
+    const original = staging.getOriginal(staged.id);
+    const modified = staging.getStaged(staged.id);
+    const { generateDiff: genDiff } = require('../core/diff.js');
+    const diff = genDiff(original, modified, filePath);
+
+    // Add to queue
+    const entry = queue.addChange(staged, diff, agentName || 'openclaw');
+
+    log.info(`Agent staged change ${entry.id} for ${filePath}`);
+
+    return res.json({
+      id: entry.id,
+      file_path: entry.file_path,
+      status: entry.status,
+      additions: entry.additions,
+      deletions: entry.deletions,
+      diff_preview: diff.unified.substring(0, 500),
+      review_url: `http://localhost:${getConfig().channels.web.port}/diff.html?id=${entry.id}`,
+    });
+  } catch (err) {
+    log.error('Stage failed:', err);
+    return res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+/**
  * GET /api/status — Overall system status
  */
 app.get('/api/status', (_req: Request, res: Response) => {
