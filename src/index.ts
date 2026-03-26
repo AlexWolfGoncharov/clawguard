@@ -1,10 +1,15 @@
 /**
- * ClawGuard — Staging layer & budget control for OpenClaw agents
+ * ClawGuard — OpenClaw plugin entry + standalone server bootstrap.
  *
- * Entry point: initializes all channels and exports the plugin.
+ * When loaded by OpenClaw as a plugin (dist/index.js via jiti):
+ *   The default export { id, configSchema, register(api) } is what OpenClaw calls.
+ *   register(api) registers a before_tool_call hook and starts channels as a service.
+ *
+ * When run directly (npm start / npm run dev):
+ *   The isMain block at the bottom bootstraps the HTTP server as a standalone process.
  */
 
-import { loadConfig } from './utils/config.js';
+import { loadConfig, getConfig } from './utils/config.js';
 import logger from './utils/logger.js';
 import { startTelegram, stopTelegram } from './channels/telegram.js';
 import { startDiscord, stopDiscord } from './channels/discord.js';
@@ -12,110 +17,257 @@ import { startWeb, stopWeb } from './channels/web.js';
 import { getBudgetTracker, ensureBudgetReady } from './core/budget.js';
 import { getStagingEngine } from './core/staging.js';
 import { ensureReady as ensureQueueReady } from './core/queue.js';
-import ClawGuardPlugin, { notifyResolution } from './openclaw/plugin.js';
+import {
+  beforeToolCallHandler,
+  notifyResolution,
+  type BeforeToolCallEvent,
+  type BeforeToolCallContext,
+} from './openclaw/plugin.js';
 
-export { ClawGuardPlugin, notifyResolution };
+export { notifyResolution };
 export * from './core/staging.js';
 export * from './core/diff.js';
 export * from './core/queue.js';
 export * from './core/budget.js';
-export * from './openclaw/plugin.js';
 
-// ── Bootstrap ─────────────────────────────────────────────────────────────────
+// ── Core initialisation (shared between plugin and standalone modes) ───────────
 
-async function bootstrap(): Promise<void> {
-  const config = loadConfig();
-  logger.init();
+let _coreReady: Promise<void> | null = null;
 
-  const log = logger.child('bootstrap');
-  log.info('ClawGuard v0.1.0 starting...');
+/**
+ * Idempotent: initialises config, logger, staging dir, and async DBs.
+ * Both the hook and the service call this; the promise is shared.
+ */
+function ensureCoreReady(): Promise<void> {
+  if (!_coreReady) {
+    _coreReady = (async () => {
+      loadConfig();
+      logger.init();
+      getStagingEngine();
+      await ensureQueueReady();
+      await ensureBudgetReady();
+      getBudgetTracker();
+    })();
+  }
+  return _coreReady;
+}
 
-  // Ensure staging directory exists
-  getStagingEngine();
-
-  // Initialize async databases (sql.js)
-  await ensureQueueReady();
-  await ensureBudgetReady();
-
-  // Ensure budget tracker is ready
-  getBudgetTracker();
-
-  // Start configured channels
-  const startTasks: Array<Promise<void>> = [];
+async function startChannels(): Promise<void> {
+  const config = getConfig();
+  const log = logger.child('channels');
+  const tasks: Promise<void>[] = [];
 
   if (config.channels.telegram.enabled) {
-    startTasks.push(
-      startTelegram().catch((err) => {
-        log.error('Telegram failed to start:', err);
-      })
-    );
+    tasks.push(startTelegram().catch((err) => log.error('Telegram failed to start:', err)));
   }
-
   if (config.channels.discord.enabled) {
-    startTasks.push(
-      startDiscord().catch((err) => {
-        log.error('Discord failed to start:', err);
-      })
-    );
+    tasks.push(startDiscord().catch((err) => log.error('Discord failed to start:', err)));
   }
-
   if (config.channels.web.enabled) {
-    startTasks.push(
-      startWeb().catch((err) => {
-        log.error('Web server failed to start:', err);
-      })
-    );
+    tasks.push(startWeb().catch((err) => log.error('Web server failed to start:', err)));
   }
 
-  await Promise.allSettled(startTasks);
-
-  log.info('ClawGuard ready.');
-  logStatus(log);
+  await Promise.allSettled(tasks);
 }
 
-function logStatus(log: ReturnType<typeof logger.child>): void {
-  const config = loadConfig();
+async function stopChannels(): Promise<void> {
+  await Promise.allSettled([stopTelegram(), stopDiscord(), stopWeb()]);
+}
+
+// ── OpenClaw Plugin Definition ────────────────────────────────────────────────
+
+/**
+ * Minimal subset of the OpenClaw plugin API used by ClawGuard.
+ * Full types: import type { OpenClawPluginApi } from 'openclaw/plugin-sdk/core'
+ */
+interface PluginApi {
+  registerHook(
+    events: string | string[],
+    handler: (event: unknown, ctx: unknown) => unknown,
+    opts: { name: string },
+  ): void;
+  registerService(service: {
+    id: string;
+    start: (ctx: unknown) => void | Promise<void>;
+    stop?: (ctx: unknown) => void | Promise<void>;
+  }): void;
+  logger: { info(msg: string): void; error(msg: string): void };
+}
+
+const configSchema = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    channels: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        telegram: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            enabled: { type: 'boolean' },
+            token: { type: 'string' },
+            chatId: { type: 'string' },
+          },
+        },
+        discord: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            enabled: { type: 'boolean' },
+            token: { type: 'string' },
+            channelId: { type: 'string' },
+          },
+        },
+        web: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            enabled: { type: 'boolean' },
+            port: { type: 'integer', minimum: 1, maximum: 65535 },
+            host: { type: 'string' },
+          },
+        },
+      },
+    },
+    budget: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        daily_limit_usd: { type: 'number', minimum: 0 },
+        alert_threshold_pct: { type: 'integer', minimum: 1, maximum: 100 },
+        hard_stop: { type: 'boolean' },
+        model_costs: {
+          type: 'object',
+          additionalProperties: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              input: { type: 'number', minimum: 0 },
+              output: { type: 'number', minimum: 0 },
+            },
+          },
+        },
+      },
+    },
+    staging: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        directory: { type: 'string' },
+        auto_approve_read: { type: 'boolean' },
+        require_approval: { type: 'array', items: { type: 'string' } },
+        timeout_seconds: { type: 'integer', minimum: 0 },
+      },
+    },
+    logging: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        level: { type: 'string', enum: ['debug', 'info', 'warn', 'error'] },
+        file: { type: 'string' },
+        max_size_mb: { type: 'integer', minimum: 1 },
+      },
+    },
+  },
+};
+
+/**
+ * Default export — OpenClaw plugin entry point.
+ *
+ * OpenClaw loads dist/index.js via jiti, reads this object, and calls register(api).
+ * resolvePluginModuleExport() in OpenClaw looks for: default.id, default.configSchema,
+ * default.register (or default.activate).
+ */
+const clawguardPlugin = {
+  id: 'clawguard',
+  name: 'ClawGuard',
+  description:
+    'Intercepts file write/edit/exec operations and requires human approval before changes are applied.',
+  version: '0.1.0',
+  configSchema,
+
+  register(api: PluginApi): void {
+    api.logger.info('[clawguard] Registering...');
+
+    // Register a managed service that owns the notification channels
+    api.registerService({
+      id: 'clawguard-core',
+      start: async () => {
+        await ensureCoreReady();
+        await startChannels();
+        api.logger.info('[clawguard] Channels started.');
+      },
+      stop: async () => {
+        await stopChannels();
+      },
+    });
+
+    // Register the tool-call interceptor.
+    // ensureCoreReady() inside the hook ensures the DBs are up even if the
+    // hook fires before the service's start() has completed.
+    api.registerHook(
+      'before_tool_call',
+      async (event: unknown, ctx: unknown) => {
+        await ensureCoreReady();
+        return beforeToolCallHandler(
+          event as BeforeToolCallEvent,
+          ctx as BeforeToolCallContext,
+        );
+      },
+      { name: 'clawguard-before-tool-call' },
+    );
+
+    api.logger.info('[clawguard] Plugin registered — intercepting write operations.');
+  },
+};
+
+export default clawguardPlugin;
+
+// ── Standalone bootstrap (npm start / npm run dev) ────────────────────────────
+
+async function bootstrap(): Promise<void> {
+  await ensureCoreReady();
+
+  const log = logger.child('bootstrap');
+  log.info('ClawGuard v0.1.0 starting (standalone mode)...');
+
+  await startChannels();
+
+  const config = getConfig();
   const { channels, budget } = config;
-
-  const activeChannels: string[] = [];
-  if (channels.telegram.enabled) activeChannels.push('Telegram');
-  if (channels.discord.enabled) activeChannels.push('Discord');
-  if (channels.web.enabled) activeChannels.push(`Web (port ${channels.web.port})`);
-
-  log.info(`Active channels: ${activeChannels.join(', ') || 'none'}`);
+  const active: string[] = [];
+  if (channels.telegram.enabled) active.push('Telegram');
+  if (channels.discord.enabled) active.push('Discord');
+  if (channels.web.enabled) active.push(`Web (port ${channels.web.port})`);
+  log.info(`Active channels: ${active.join(', ') || 'none'}`);
   log.info(
-    `Budget: $${budget.daily_limit_usd}/day | Alert at ${budget.alert_threshold_pct}% | Hard stop: ${budget.hard_stop}`
+    `Budget: $${budget.daily_limit_usd}/day | Alert at ${budget.alert_threshold_pct}% | Hard stop: ${budget.hard_stop}`,
   );
+  log.info('ClawGuard ready.');
 }
-
-// ── Graceful Shutdown ─────────────────────────────────────────────────────────
 
 async function shutdown(): Promise<void> {
   const log = logger.child('shutdown');
   log.info('Shutting down...');
-
-  await Promise.allSettled([stopTelegram(), stopDiscord(), stopWeb()]);
-
+  await stopChannels();
   logger.close();
   process.exit(0);
 }
 
 process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);
-
 process.on('uncaughtException', (err) => {
   console.error('[clawguard] Uncaught exception:', err);
   process.exit(1);
 });
-
 process.on('unhandledRejection', (reason) => {
   console.error('[clawguard] Unhandled rejection:', reason);
 });
 
-// Run if called directly
 const isMain =
-  process.argv[1]?.endsWith('index.ts') ||
-  process.argv[1]?.endsWith('index.js');
+  process.argv[1]?.endsWith('index.ts') || process.argv[1]?.endsWith('index.js');
 
 if (isMain) {
   bootstrap().catch((err) => {
@@ -123,5 +275,3 @@ if (isMain) {
     process.exit(1);
   });
 }
-
-export default ClawGuardPlugin;

@@ -6,6 +6,7 @@ import { formatForTelegram } from '../core/diff.js';
 import * as queue from '../core/queue.js';
 import { getStagingEngine } from '../core/staging.js';
 import { getBudgetTracker } from '../core/budget.js';
+import { notifyResolution } from '../openclaw/plugin.js';
 import type { QueueEntry } from '../core/queue.js';
 import type { DiffResult } from '../core/diff.js';
 
@@ -179,21 +180,24 @@ async function handleApprove(ctx: Context): Promise<void> {
   const changeId = match[1];
 
   try {
-    const staging = getStagingEngine();
-    queue.resolveChange(changeId, 'approved');
-    staging.apply(changeId);
+    // Plugin mode: unblock the waiting hook. Standalone: apply directly.
+    const handledByHook = notifyResolution(changeId, true);
+
+    if (!handledByHook) {
+      const staging = getStagingEngine();
+      queue.resolveChange(changeId, 'approved');
+      staging.apply(changeId);
+    }
 
     await ctx.editMessageReplyMarkup({ inline_keyboard: [] });
-    await ctx.answerCbQuery('✅ Change applied to filesystem');
-    await ctx.reply(`✅ Applied change \`${changeId.slice(0, 8)}...\``, {
+    await ctx.answerCbQuery('✅ Change approved');
+    await ctx.reply(`✅ Approved change \`${changeId.slice(0, 8)}...\``, {
       parse_mode: 'Markdown',
     });
   } catch (err) {
     log.error(`Approve failed for ${changeId}:`, err);
-    await ctx.answerCbQuery('❌ Error applying change');
-    await ctx.reply(
-      `Error: ${err instanceof Error ? err.message : String(err)}`
-    );
+    await ctx.answerCbQuery('❌ Error approving change');
+    await ctx.reply(`Error: ${err instanceof Error ? err.message : String(err)}`);
   }
 }
 
@@ -202,9 +206,14 @@ async function handleReject(ctx: Context): Promise<void> {
   const changeId = match[1];
 
   try {
-    const staging = getStagingEngine();
-    queue.resolveChange(changeId, 'rejected');
-    staging.reject(changeId);
+    // Plugin mode: unblock the waiting hook. Standalone: reject directly.
+    const handledByHook = notifyResolution(changeId, false);
+
+    if (!handledByHook) {
+      const staging = getStagingEngine();
+      queue.resolveChange(changeId, 'rejected');
+      staging.reject(changeId);
+    }
 
     await ctx.editMessageReplyMarkup({ inline_keyboard: [] });
     await ctx.answerCbQuery('❌ Change rejected');

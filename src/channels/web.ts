@@ -8,19 +8,18 @@ import { generateDiff, formatForWeb } from '../core/diff.js';
 import * as queue from '../core/queue.js';
 import { getStagingEngine } from '../core/staging.js';
 import { getBudgetTracker } from '../core/budget.js';
-
+import { notifyResolution } from '../openclaw/plugin.js';
 
 const log = logger.child('web');
 
 const WEB_DIR = path.resolve(__dirname, '..', '..', 'web');
 
-let server: ReturnType<typeof app.listen> | null = null;
 const app = express();
+let server: ReturnType<typeof app.listen> | null = null;
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Serve static web files
 if (fs.existsSync(WEB_DIR)) {
   app.use(express.static(WEB_DIR));
 }
@@ -28,12 +27,17 @@ if (fs.existsSync(WEB_DIR)) {
 // ── API Routes ────────────────────────────────────────────────────────────────
 
 /**
- * POST /api/stage — Agent submits a file change for review
- * This is the main entry point for OpenClaw agents.
+ * POST /api/stage — Agent submits a file change for review (standalone / skill mode).
+ * In plugin mode changes are intercepted automatically; this endpoint still works
+ * for skill-based or manual submissions.
  */
 app.post('/api/stage', (req: Request, res: Response) => {
   try {
-    const { file_path: filePath, new_content: newContent, agent_name: agentName } = req.body;
+    const { file_path: filePath, new_content: newContent, agent_name: agentName } = req.body as {
+      file_path?: string;
+      new_content?: string;
+      agent_name?: string;
+    };
 
     if (!filePath || newContent === undefined) {
       return res.status(400).json({ error: 'file_path and new_content are required' });
@@ -41,15 +45,8 @@ app.post('/api/stage', (req: Request, res: Response) => {
 
     const staging = getStagingEngine();
     const staged = staging.stage(filePath, newContent);
-
-    // Generate diff
-    const original = staging.getOriginal(staged.id);
-    const modified = staging.getStaged(staged.id);
-    const { generateDiff: genDiff } = require('../core/diff.js');
-    const diff = genDiff(original, modified, filePath);
-
-    // Add to queue
-    const entry = queue.addChange(staged, diff, agentName || 'openclaw');
+    const diff = generateDiff(staged.originalContent, staged.newContent, filePath);
+    const entry = queue.addChange(staged, diff, agentName ?? 'openclaw');
 
     log.info(`Agent staged change ${entry.id} for ${filePath}`);
 
@@ -69,7 +66,7 @@ app.post('/api/stage', (req: Request, res: Response) => {
 });
 
 /**
- * GET /api/status — Overall system status
+ * GET /api/status — Overall system status.
  */
 app.get('/api/status', (_req: Request, res: Response) => {
   const tracker = getBudgetTracker();
@@ -86,7 +83,7 @@ app.get('/api/status', (_req: Request, res: Response) => {
 });
 
 /**
- * GET /api/changes — List changes (with optional status filter)
+ * GET /api/changes — List changes with optional ?status=pending filter.
  */
 app.get('/api/changes', (req: Request, res: Response) => {
   const status = req.query['status'] as string | undefined;
@@ -101,7 +98,7 @@ app.get('/api/changes', (req: Request, res: Response) => {
 });
 
 /**
- * GET /api/changes/:id — Get a single change with diff HTML
+ * GET /api/changes/:id — Single change with rendered diff HTML.
  */
 app.get('/api/changes/:id', (req: Request, res: Response) => {
   const entry = queue.getChange(req.params['id']!);
@@ -111,13 +108,11 @@ app.get('/api/changes/:id', (req: Request, res: Response) => {
   let diffHtml = '';
 
   try {
-    // Regenerate diff from staged content if still available
     const original = staging.getOriginal(entry.id);
     const staged = staging.getStaged(entry.id);
     const diff = generateDiff(original, staged, entry.file_path);
     diffHtml = formatForWeb(diff);
   } catch {
-    // Change no longer in staging — render from stored diff_text
     diffHtml = renderStoredDiff(entry.diff_text);
   }
 
@@ -126,17 +121,26 @@ app.get('/api/changes/:id', (req: Request, res: Response) => {
 
 /**
  * POST /api/changes/:id/approve
+ *
+ * Plugin mode  → calls notifyResolution() which unblocks the waiting hook.
+ *                The hook handles resolveChange + staging cleanup.
+ * Standalone   → notifyResolution returns false; we apply the change directly.
  */
 app.post('/api/changes/:id/approve', (req: Request, res: Response) => {
   const id = req.params['id']!;
 
   try {
-    const staging = getStagingEngine();
-    const entry = queue.resolveChange(id, 'approved');
-    staging.apply(id);
+    const handledByHook = notifyResolution(id, true);
 
-    log.info(`Web UI approved change ${id}`);
-    return res.json({ success: true, entry });
+    if (!handledByHook) {
+      // Standalone mode: no hook is waiting, apply to filesystem now
+      const staging = getStagingEngine();
+      queue.resolveChange(id, 'approved');
+      staging.apply(id);
+    }
+
+    log.info(`Web UI approved change ${id}${handledByHook ? ' (plugin mode)' : ' (standalone)'}`);
+    return res.json({ success: true });
   } catch (err) {
     log.error(`Approve failed for ${id}:`, err);
     return res.status(500).json({
@@ -147,17 +151,23 @@ app.post('/api/changes/:id/approve', (req: Request, res: Response) => {
 
 /**
  * POST /api/changes/:id/reject
+ *
+ * Same dual-mode logic as approve.
  */
 app.post('/api/changes/:id/reject', (req: Request, res: Response) => {
   const id = req.params['id']!;
 
   try {
-    const staging = getStagingEngine();
-    const entry = queue.resolveChange(id, 'rejected');
-    staging.reject(id);
+    const handledByHook = notifyResolution(id, false);
 
-    log.info(`Web UI rejected change ${id}`);
-    return res.json({ success: true, entry });
+    if (!handledByHook) {
+      const staging = getStagingEngine();
+      queue.resolveChange(id, 'rejected');
+      staging.reject(id);
+    }
+
+    log.info(`Web UI rejected change ${id}${handledByHook ? ' (plugin mode)' : ' (standalone)'}`);
+    return res.json({ success: true });
   } catch (err) {
     log.error(`Reject failed for ${id}:`, err);
     return res.status(500).json({
@@ -167,18 +177,17 @@ app.post('/api/changes/:id/reject', (req: Request, res: Response) => {
 });
 
 /**
- * GET /api/budget — Budget details and daily breakdown
+ * GET /api/budget — Budget details and 7-day breakdown.
  */
 app.get('/api/budget', (_req: Request, res: Response) => {
   const tracker = getBudgetTracker();
   const status = tracker.checkBudget();
   const breakdown = tracker.getDailyBreakdown(7);
-
   res.json({ status, breakdown });
 });
 
 /**
- * GET /api/budget/history — Raw usage records
+ * GET /api/budget/history — Raw usage records.
  */
 app.get('/api/budget/history', (req: Request, res: Response) => {
   const tracker = getBudgetTracker();
@@ -187,7 +196,7 @@ app.get('/api/budget/history', (req: Request, res: Response) => {
 });
 
 /**
- * SSE endpoint for real-time updates to the dashboard.
+ * GET /api/events — SSE stream for real-time dashboard updates.
  */
 app.get('/api/events', (req: Request, res: Response) => {
   res.setHeader('Content-Type', 'text/event-stream');
@@ -199,14 +208,10 @@ app.get('/api/events', (req: Request, res: Response) => {
     const counts = queue.countByStatus();
     const tracker = getBudgetTracker();
     const budget = tracker.checkBudget();
-
-    const data = JSON.stringify({ counts, budget, ts: Date.now() });
-    res.write(`data: ${data}\n\n`);
+    res.write(`data: ${JSON.stringify({ counts, budget, ts: Date.now() })}\n\n`);
   }, 5000);
 
-  req.on('close', () => {
-    clearInterval(interval);
-  });
+  req.on('close', () => clearInterval(interval));
 });
 
 // Catch-all: serve index.html for SPA routing
@@ -225,9 +230,8 @@ app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
   res.status(500).json({ error: err.message });
 });
 
-/**
- * Start the web server.
- */
+// ── Server lifecycle ──────────────────────────────────────────────────────────
+
 export function startWeb(): Promise<void> {
   const config = getConfig();
   if (!config.channels.web.enabled) {
@@ -264,6 +268,10 @@ export function stopWeb(): Promise<void> {
   });
 }
 
+export { app };
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
 function renderStoredDiff(diffText: string): string {
   const lines = diffText.split('\n');
   const htmlLines = lines.map((line) => {
@@ -284,5 +292,3 @@ function renderStoredDiff(diffText: string): string {
 
   return `<div class="diff-block">${htmlLines.join('')}</div>`;
 }
-
-export { app };

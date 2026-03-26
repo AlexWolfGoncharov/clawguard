@@ -14,6 +14,7 @@ import { formatForDiscord } from '../core/diff.js';
 import * as queue from '../core/queue.js';
 import { getStagingEngine } from '../core/staging.js';
 import { getBudgetTracker } from '../core/budget.js';
+import { notifyResolution } from '../openclaw/plugin.js';
 import type { QueueEntry } from '../core/queue.js';
 import type { DiffResult } from '../core/diff.js';
 
@@ -127,15 +128,23 @@ async function handleButtonInteraction(interaction: ButtonInteraction): Promise<
 
   try {
     if (action === 'approve') {
-      queue.resolveChange(changeId, 'approved');
-      staging.apply(changeId);
+      // Plugin mode: unblock the waiting hook. Standalone: apply directly.
+      const handledByHook = notifyResolution(changeId, true);
+      if (!handledByHook) {
+        queue.resolveChange(changeId, 'approved');
+        staging.apply(changeId);
+      }
       await interaction.update({
-        content: `✅ Change \`${changeId.slice(0, 8)}...\` approved and applied.`,
+        content: `✅ Change \`${changeId.slice(0, 8)}...\` approved.`,
         components: [],
       });
     } else {
-      queue.resolveChange(changeId, 'rejected');
-      staging.reject(changeId);
+      // Plugin mode: unblock the waiting hook. Standalone: reject directly.
+      const handledByHook = notifyResolution(changeId, false);
+      if (!handledByHook) {
+        queue.resolveChange(changeId, 'rejected');
+        staging.reject(changeId);
+      }
       await interaction.update({
         content: `❌ Change \`${changeId.slice(0, 8)}...\` rejected.`,
         components: [],
