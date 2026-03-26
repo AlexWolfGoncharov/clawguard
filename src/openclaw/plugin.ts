@@ -106,8 +106,14 @@ export async function beforeToolCallHandler(
   ctx: BeforeToolCallContext,
 ): Promise<BeforeToolCallResult> {
   const { toolName, params } = event;
+
+  // Use console.error so it always shows in OpenClaw logs regardless of logger state
+  console.error(`[clawguard] before_tool_call fired: tool=${toolName} agentId=${ctx.agentId ?? 'unknown'}`);
+
   const config = getConfig();
   const { require_approval, auto_approve_read, timeout_seconds } = config.staging;
+
+  console.error(`[clawguard] require_approval=${JSON.stringify(require_approval)} tool=${toolName}`);
 
   // Budget gate
   const tracker = getBudgetTracker();
@@ -122,7 +128,10 @@ export async function beforeToolCallHandler(
     toolName.toLowerCase().includes(r),
   );
 
+  console.error(`[clawguard] requiresApproval=${requiresApproval} isReadOp=${isReadOp}`);
+
   if (!requiresApproval || (auto_approve_read && isReadOp)) {
+    console.error(`[clawguard] passthrough: ${toolName} not in approval list or is read-only`);
     return { block: false };
   }
 
@@ -130,13 +139,17 @@ export async function beforeToolCallHandler(
   const filePath = extractFilePath(params);
   const newContent = extractContent(params);
 
+  console.error(`[clawguard] filePath=${filePath} hasContent=${newContent !== null} paramKeys=${Object.keys(params).join(',')}`);
+
   if (!filePath) {
     log.debug(`Tool ${toolName}: no file path arg — passthrough`);
+    console.error(`[clawguard] passthrough: no file path in params`);
     return { block: false };
   }
 
   if (newContent === null) {
     log.debug(`Tool ${toolName}: no content arg — passthrough`);
+    console.error(`[clawguard] passthrough: no content in params`);
     return { block: false };
   }
 

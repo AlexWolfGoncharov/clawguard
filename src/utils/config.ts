@@ -137,6 +137,9 @@ export function loadConfig(configPath?: string): ClawGuardConfig {
   const searchPaths = [
     configPath,
     process.env['CLAWGUARD_CONFIG'],
+    // When loaded as an OpenClaw plugin, cwd is not the project root.
+    // __dirname resolves to dist/utils/, so go two levels up to the project root.
+    path.join(__dirname, '..', '..', 'config.json5'),
     path.join(process.cwd(), 'config.json5'),
     path.join(os.homedir(), '.clawguard', 'config.json5'),
   ].filter(Boolean) as string[];

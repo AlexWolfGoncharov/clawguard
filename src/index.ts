@@ -271,8 +271,10 @@ process.on('unhandledRejection', (reason) => {
   console.error('[clawguard] Unhandled rejection:', reason);
 });
 
-const isMain =
-  process.argv[1]?.endsWith('index.ts') || process.argv[1]?.endsWith('index.js');
+// require.main === module is the correct CJS idiom:
+// - true  when run directly:  node dist/index.js  or  tsx src/index.ts
+// - false when loaded via require() or jiti (OpenClaw plugin context)
+const isMain = typeof require !== 'undefined' && require.main === module;
 
 if (isMain) {
   bootstrap().catch((err) => {
