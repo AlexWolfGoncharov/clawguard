@@ -33,6 +33,7 @@ export * from './core/budget.js';
 // ── Core initialisation (shared between plugin and standalone modes) ───────────
 
 let _coreReady: Promise<void> | null = null;
+let _channelsStarted = false;
 
 /**
  * Idempotent: initialises config, logger, staging dir, and async DBs.
@@ -53,6 +54,9 @@ function ensureCoreReady(): Promise<void> {
 }
 
 async function startChannels(): Promise<void> {
+  if (_channelsStarted) return;
+  _channelsStarted = true;
+
   const config = getConfig();
   const log = logger.child('channels');
   const tasks: Promise<void>[] = [];
@@ -71,6 +75,7 @@ async function startChannels(): Promise<void> {
 }
 
 async function stopChannels(): Promise<void> {
+  _channelsStarted = false;
   await Promise.allSettled([stopTelegram(), stopDiscord(), stopWeb()]);
 }
 

@@ -1,0 +1,87 @@
+{
+  "id": "clawguard",
+  "name": "ClawGuard",
+  "description": "Intercepts file write/edit/exec operations and requires human approval before changes are applied.",
+  "version": "0.1.0",
+  "skills": [
+    "./openclaw-skill"
+  ],
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "channels": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "telegram": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "enabled": { "type": "boolean" },
+              "token": { "type": "string" },
+              "chatId": { "type": "string" }
+            }
+          },
+          "discord": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "enabled": { "type": "boolean" },
+              "token": { "type": "string" },
+              "channelId": { "type": "string" }
+            }
+          },
+          "web": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "enabled": { "type": "boolean" },
+              "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+              "host": { "type": "string" }
+            }
+          }
+        }
+      },
+      "budget": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "daily_limit_usd": { "type": "number", "minimum": 0 },
+          "alert_threshold_pct": { "type": "integer", "minimum": 1, "maximum": 100 },
+          "hard_stop": { "type": "boolean" },
+          "model_costs": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "input": { "type": "number", "minimum": 0 },
+                "output": { "type": "number", "minimum": 0 }
+              }
+            }
+          }
+        }
+      },
+      "staging": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "directory": { "type": "string" },
+          "auto_approve_read": { "type": "boolean" },
+          "require_approval": { "type": "array", "items": { "type": "string" } },
+          "timeout_seconds": { "type": "integer", "minimum": 0 }
+        }
+      },
+      "logging": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "level": { "type": "string", "enum": ["debug", "info", "warn", "error"] },
+          "file": { "type": "string" },
+          "max_size_mb": { "type": "integer", "minimum": 1 }
+        }
+      }
+    }
+  }
+}
